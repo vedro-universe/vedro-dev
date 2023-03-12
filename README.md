@@ -1,1 +1,1 @@
-# vedro-dev
+# Vedro Dev
