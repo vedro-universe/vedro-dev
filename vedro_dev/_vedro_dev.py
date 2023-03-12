@@ -229,7 +229,7 @@ class VedroDev(PluginConfig):
     plugin = VedroDevPlugin
 
     # Host for WebSocket server
-    host: str = "localhost"
+    host: str = "0.0.0.0"
 
     # Port for WebSocket server
     port: int = 8080
