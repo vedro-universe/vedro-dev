@@ -12,6 +12,7 @@ MessageType = Dict[str, Any]
 class WebSocketServer:
     def __init__(self, host: str = "localhost", port: int = 8080, *,
                  on_connect: Optional[Callable[[], Awaitable[None]]] = None,
+                 on_disconnect: Optional[Callable[[], Awaitable[None]]] = None,
                  on_message: Optional[Callable[[MessageType], Awaitable[None]]] = None) -> None:
         self._host = host
         self._port = port
@@ -22,13 +23,13 @@ class WebSocketServer:
 
         self._app["websockets"] = WeakSet()
         self._on_connect = on_connect
+        self._on_disconnect = on_disconnect
         self._on_message = on_message
 
     async def _handler(self, request: Request) -> WebSocketResponse:
         ws = WebSocketResponse()
         await ws.prepare(request)
         request.app["websockets"].add(ws)
-
         if self._on_connect:
             await self._on_connect()
 
@@ -38,6 +39,8 @@ class WebSocketServer:
                     await self._on_message(loads(msg.data))
         finally:
             request.app["websockets"].discard(ws)
+            if self._on_disconnect:
+                await self._on_disconnect()
 
         return ws
 

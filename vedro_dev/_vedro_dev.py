@@ -2,6 +2,7 @@ from asyncio import CancelledError
 from pathlib import Path
 from typing import Dict, List, Type, Union, cast
 
+from rich.style import Style
 from vedro.core import (
     ConfigType,
     Dispatcher,
@@ -26,6 +27,7 @@ from vedro.events import (
     StepPassedEvent,
     StepRunEvent,
 )
+from vedro.plugins.director.rich import RichPrinter
 
 from ._dev_runner import DevScenarioRunner
 from ._protocol import ProtoAction, ScenarioInfo, StepInfo, StepStatus
@@ -43,7 +45,9 @@ class VedroDevPlugin(Plugin):
         self._port = config.port
         self._app_open_on_startup = config.app_open_on_startup
         self._app_url = config.app_url
+        self._verbose = config.verbose
 
+        self._rich_printer = RichPrinter()
         self._global_config: ConfigType = cast(ConfigType, ...)
         self._loader: ScenarioLoader = cast(ScenarioLoader, ...)
         self._discoverer: ScenarioDiscoverer = cast(ScenarioDiscoverer, ...)
@@ -113,8 +117,16 @@ class VedroDevPlugin(Plugin):
         self._step_scheduler = DevStepScheduler(scenario)
         return self._step_scheduler
 
+    def _print(self, message: str) -> None:
+        if self._verbose:
+            self._rich_printer._console.out(f"# {message}", style=Style(color="grey50"))
+
     async def _on_connect(self) -> None:
+        self._print("Client connected")
         await self._sync_state()
+
+    async def _on_disconnect(self) -> None:
+        self._print("Client disconnected")
 
     async def _run_step_x(self, step_name: str) -> None:
         step = await self._reload_step(self._scenario["unique_id"], self._scenario["rel_path"], step_name)
@@ -140,16 +152,10 @@ class VedroDevPlugin(Plugin):
         if step_name is not None:
             return await self._run_step_x(step_name)
 
-        reloaded = await self._reload_scenario(self._scenario["unique_id"], self._scenario["rel_path"])
-        steps = [step for idx, step in enumerate(reloaded.steps) if idx == 0]
-        scenario = VirtualScenario(reloaded._orig_scenario, steps)
-
-        self._set_scenario(scenario)
-        self._set_steps(reloaded.steps)
-
-        if len(steps) == 0:
-            return await self._sync_state()
-        return await self._run_step_before(steps[0].name)
+        steps = [step for step in self._steps.values() if step["index"] == 0]
+        if len(steps) != 1:
+            exit("Failed to find first step")
+        return await self._run_step_before(steps[0]["name"])
 
     async def _on_message(self, message: MessageType) -> None:
         action = ProtoAction(message["action"])
@@ -215,15 +221,20 @@ class VedroDevPlugin(Plugin):
 
         self._ws_server = WebSocketServer(self._host, self._port,
                                           on_connect=self._on_connect,
+                                          on_disconnect=self._on_disconnect,
                                           on_message=self._on_message)
         await self._ws_server.start()
+
+        self._print(f"Server started on {self._host}:{self._port}")
 
         if self._app_open_on_startup:
             import webbrowser
             webbrowser.open(self._app_url, new=2)  # open new browser page ("tab")
 
     async def on_scenario_run(self, event: ScenarioRunEvent) -> None:
-        pass
+        scenario_result = event.scenario_result
+        self._rich_printer._console.out(f" → {scenario_result.scenario.subject}",
+                                        style=Style(color="cyan"))
 
     async def on_step_run(self, event: StepRunEvent) -> None:
         self._steps[event.step_result.step_name]["status"] = StepStatus.RUNNING
@@ -231,6 +242,11 @@ class VedroDevPlugin(Plugin):
 
     async def on_step_end(self, event: Union[StepPassedEvent, StepFailedEvent]) -> None:
         step_result = event.step_result
+
+        self._rich_printer.print_step_name(step_result.step_name, step_result.status, prefix=" " * 3)
+        if step_result.exc_info:
+            self._rich_printer.print_exception(step_result.exc_info)
+
         status = StepStatus.FAILED if isinstance(event, StepFailedEvent) else StepStatus.PASSED
         self._steps[step_result.step_name]["status"] = status
         await self._sync_state()
@@ -240,6 +256,7 @@ class VedroDevPlugin(Plugin):
 
     async def on_cleanup(self, event: CleanupEvent) -> None:
         await self._ws_server.stop()
+        self._print("Server stopped")
 
 
 class VedroDev(PluginConfig):
@@ -256,3 +273,6 @@ class VedroDev(PluginConfig):
 
     # Open app on startup
     app_open_on_startup: bool = False
+
+    # Verbose mode
+    verbose = False
