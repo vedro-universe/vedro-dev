@@ -1,6 +1,6 @@
 from asyncio import CancelledError
 from pathlib import Path
-from typing import Dict, List, Set, Type, Union, cast
+from typing import Dict, List, Type, Union, cast
 
 from vedro.core import (
     ConfigType,
@@ -28,7 +28,7 @@ from vedro.events import (
 )
 
 from ._dev_runner import DevScenarioRunner
-from ._protocol import Action, ScenarioInfo, StepInfo, StepStatus
+from ._protocol import ProtoAction, ScenarioInfo, StepInfo, StepStatus
 from ._step_scheduler import DevStepScheduler
 from ._version import version
 from ._web_socket_server import MessageType, WebSocketServer
@@ -41,6 +41,8 @@ class VedroDevPlugin(Plugin):
         super().__init__(config)
         self._host = config.host
         self._port = config.port
+        self._app_open_on_startup = config.app_open_on_startup
+        self._app_url = config.app_url
 
         self._global_config: ConfigType = cast(ConfigType, ...)
         self._loader: ScenarioLoader = cast(ScenarioLoader, ...)
@@ -114,15 +116,18 @@ class VedroDevPlugin(Plugin):
     async def _on_connect(self) -> None:
         await self._sync_state()
 
-    async def _run_specific_step(self, step_name: str) -> None:
+    async def _run_step_x(self, step_name: str) -> None:
         step = await self._reload_step(self._scenario["unique_id"], self._scenario["rel_path"], step_name)
         self._steps[step.name]["status"] = StepStatus.PENDING
         self._step_scheduler.schedule(step)
 
-    async def _run_to_step(self, step_names: Set[str]) -> None:
+    async def _run_step_before(self, step_name: str) -> None:
         reloaded = await self._reload_scenario(self._scenario["unique_id"], self._scenario["rel_path"])
-
-        steps = [step for step in reloaded.steps if step.name in step_names]
+        steps = []
+        for step in reloaded.steps:
+            steps.append(step)
+            if step.name == step_name:
+                break
         scenario = VirtualScenario(reloaded._orig_scenario, steps)
 
         self._set_scenario(scenario)
@@ -131,22 +136,29 @@ class VedroDevPlugin(Plugin):
         self._scn_scheduler.schedule(scenario)
         self._step_scheduler.schedule(None)
 
-    async def _run_next_step(self, step_name: Union[str, None]) -> None:
+    async def _run_step_next(self, step_name: Union[str, None]) -> None:
         if step_name is not None:
-            return await self._run_specific_step(step_name)
-        first_step = set(step["name"] for step in self._steps.values() if step["index"] == 0)
-        if len(first_step) != 1:
-            exit("Failed to find first step")
-        return await self._run_to_step(first_step)
+            return await self._run_step_x(step_name)
+
+        reloaded = await self._reload_scenario(self._scenario["unique_id"], self._scenario["rel_path"])
+        steps = [step for idx, step in enumerate(reloaded.steps) if idx == 0]
+        scenario = VirtualScenario(reloaded._orig_scenario, steps)
+
+        self._set_scenario(scenario)
+        self._set_steps(reloaded.steps)
+
+        if len(steps) == 0:
+            return await self._sync_state()
+        return await self._run_step_before(steps[0].name)
 
     async def _on_message(self, message: MessageType) -> None:
-        action = Action(message["action"])
-        if action == Action.RUN_SPECIFIC_STEP:
-            await self._run_specific_step(message["payload"]["step"])
-        elif action == Action.RUN_TO_STEP:
-            await self._run_to_step(set(message["payload"]["steps"]))
-        elif action == Action.RUN_NEXT_STEP:
-            await self._run_next_step(message["payload"]["step"])
+        action = ProtoAction(message["action"])
+        if action == ProtoAction.RUN_STEP_X:
+            await self._run_step_x(message["payload"]["step"])
+        elif action == ProtoAction.RUN_STEPS_BEFORE:
+            await self._run_step_before(message["payload"]["step"])
+        elif action == ProtoAction.RUN_STEP_NEXT:
+            await self._run_step_next(message["payload"]["step"])
         else:
             exit(f"Unknown action {action}")
 
@@ -159,7 +171,7 @@ class VedroDevPlugin(Plugin):
                 "status": step["status"].value,
             })
         await self._ws_server.send_message({
-            "action": Action.UPDATE_STATE.value,
+            "action": ProtoAction.SYNC_STATE.value,
             "version": version,
             "payload": {
                 "unique_id": self._scenario["unique_id"],
@@ -206,20 +218,25 @@ class VedroDevPlugin(Plugin):
                                           on_message=self._on_message)
         await self._ws_server.start()
 
+        if self._app_open_on_startup:
+            import webbrowser
+            webbrowser.open(self._app_url, new=2)  # open new browser page ("tab")
+
     async def on_scenario_run(self, event: ScenarioRunEvent) -> None:
-        await self._sync_state()
+        pass
 
     async def on_step_run(self, event: StepRunEvent) -> None:
         self._steps[event.step_result.step_name]["status"] = StepStatus.RUNNING
         await self._sync_state()
 
     async def on_step_end(self, event: Union[StepPassedEvent, StepFailedEvent]) -> None:
-        status = StepStatus.PASSED if isinstance(event, StepPassedEvent) else StepStatus.FAILED
-        self._steps[event.step_result.step_name]["status"] = status
+        step_result = event.step_result
+        status = StepStatus.FAILED if isinstance(event, StepFailedEvent) else StepStatus.PASSED
+        self._steps[step_result.step_name]["status"] = status
         await self._sync_state()
 
     async def on_scenario_end(self, event: Union[ScenarioPassedEvent, ScenarioFailedEvent]) -> None:
-        await self._sync_state()
+        pass
 
     async def on_cleanup(self, event: CleanupEvent) -> None:
         await self._ws_server.stop()
@@ -233,3 +250,9 @@ class VedroDev(PluginConfig):
 
     # Port for WebSocket server
     port: int = 8080
+
+    # App URL
+    app_url: str = "http://localhost:3000"
+
+    # Open app on startup
+    app_open_on_startup: bool = False

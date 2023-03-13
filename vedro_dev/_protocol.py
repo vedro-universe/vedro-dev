@@ -2,14 +2,14 @@ from enum import Enum
 from pathlib import Path
 from typing import TypedDict
 
-__all__ = ("Action", "StepStatus", "ScenarioInfo", "StepInfo",)
+__all__ = ("ProtoAction", "StepStatus", "ScenarioInfo", "StepInfo",)
 
 
-class Action(Enum):
-    RUN_SPECIFIC_STEP = "RunSecificStep"
-    RUN_TO_STEP = "RunToStep"
-    RUN_NEXT_STEP = "RunNextStep"
-    UPDATE_STATE = "UpdateState"
+class ProtoAction(Enum):
+    RUN_STEP_X = "RUN_STEP_X"
+    RUN_STEPS_BEFORE = "RUN_STEPS_BEFORE"
+    RUN_STEP_NEXT = "RUN_STEP_NEXT"
+    SYNC_STATE = "SYNC_STATE"
 
 
 class StepStatus(Enum):

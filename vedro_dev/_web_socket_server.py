@@ -17,7 +17,7 @@ class WebSocketServer:
         self._port = port
 
         self._app = Application()
-        self._app.router.add_get("/", self._handler)
+        self._app.router.add_get("/ws", self._handler)
         self._runner = AppRunner(self._app)
 
         self._app["websockets"] = WeakSet()
