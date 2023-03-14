@@ -17,12 +17,12 @@ class ModuleReloader:
                 importlib.reload(module)
 
     def _path_to_module(self, path: Path) -> Union[str, None]:
-        cwd = Path.cwd()
-
-        if not path.is_relative_to(cwd):
-            return None
-
         if path.name == "__init__.py":
             path = path.parent
-        rel_path = path.relative_to(cwd)
-        return ".".join(rel_path.with_suffix("").parts)
+
+        try:
+            rel_path = path.relative_to(Path.cwd())
+        except ValueError:
+            return None
+        else:
+            return ".".join(rel_path.with_suffix("").parts)
