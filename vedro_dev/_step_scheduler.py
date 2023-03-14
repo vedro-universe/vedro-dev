@@ -49,8 +49,7 @@ class DevStepScheduler(StepScheduler):
         return self
 
     async def __anext__(self) -> VirtualStep:
-        while True:
-            maybe_step = await self._queue.get()
-            if maybe_step is None:
-                raise StopAsyncIteration()
-            return maybe_step
+        maybe_step = await self._queue.get()
+        if maybe_step is None:
+            raise StopAsyncIteration()
+        return maybe_step

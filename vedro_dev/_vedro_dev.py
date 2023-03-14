@@ -1,3 +1,4 @@
+import webbrowser
 from asyncio import CancelledError
 from pathlib import Path
 from typing import Dict, List, Type, Union, cast
@@ -32,7 +33,6 @@ from vedro.plugins.director.rich import RichPrinter
 from ._dev_runner import DevScenarioRunner
 from ._protocol import ProtoAction, ScenarioInfo, StepInfo, StepStatus
 from ._step_scheduler import DevStepScheduler
-from ._version import version
 from ._web_socket_server import MessageType, WebSocketServer
 
 __all__ = ("VedroDev", "VedroDevPlugin")
@@ -47,17 +47,18 @@ class VedroDevPlugin(Plugin):
         self._app_url = config.app_url
         self._verbose = config.verbose
 
-        self._rich_printer = RichPrinter()
-        self._global_config: ConfigType = cast(ConfigType, ...)
-        self._loader: ScenarioLoader = cast(ScenarioLoader, ...)
-        self._discoverer: ScenarioDiscoverer = cast(ScenarioDiscoverer, ...)
+        self._rich_printer = cast(RichPrinter, ...)
+        self._global_config = cast(ConfigType, ...)
+        self._loader = cast(ScenarioLoader, ...)
+        self._discoverer = cast(ScenarioDiscoverer, ...)
 
-        self._ws_server: WebSocketServer = cast(WebSocketServer, ...)
+        self._ws_server = cast(WebSocketServer, ...)
 
-        self._scn_scheduler: ScenarioScheduler = cast(ScenarioScheduler, ...)
-        self._step_scheduler: DevStepScheduler = cast(DevStepScheduler, ...)
-        self._scenario: ScenarioInfo = cast(ScenarioInfo, ...)
+        self._scn_scheduler = cast(ScenarioScheduler, ...)
+        self._step_scheduler = cast(DevStepScheduler, ...)
+        self._scenario = cast(ScenarioInfo, ...)
         self._steps: Dict[str, StepInfo] = {}
+        self._step_buffer: List[VirtualStep] = []
 
     def _set_scenario(self, scenario: VirtualScenario) -> None:
         self._scenario = {
@@ -102,6 +103,7 @@ class VedroDevPlugin(Plugin):
                         .listen(ScenarioFailedEvent, self.on_scenario_end) \
                         .listen(CleanupEvent, self.on_cleanup)
 
+        self._rich_printer = RichPrinter()
         self._loader = self._global_config.Registry.ScenarioLoader()
         self._discoverer = self._global_config.Registry.ScenarioDiscoverer()
 
@@ -140,7 +142,10 @@ class VedroDevPlugin(Plugin):
             steps.append(step)
             if step.name == step_name:
                 break
-        scenario = VirtualScenario(reloaded._orig_scenario, steps)
+        if len(steps) == 0:
+            exit(f"Failed to find step {step_name}")
+        scenario = VirtualScenario(reloaded._orig_scenario, [steps[0]])
+        self._step_buffer = steps[1:]
 
         self._set_scenario(scenario)
         self._set_steps(reloaded.steps)
@@ -178,7 +183,7 @@ class VedroDevPlugin(Plugin):
             })
         await self._ws_server.send_message({
             "action": ProtoAction.SYNC_STATE.value,
-            "version": version,
+            "version": "v2",
             "payload": {
                 "unique_id": self._scenario["unique_id"],
                 "subject": self._scenario["subject"],
@@ -228,12 +233,12 @@ class VedroDevPlugin(Plugin):
         self._print(f"Server started on {self._host}:{self._port}")
 
         if self._app_open_on_startup:
-            import webbrowser
-            webbrowser.open(self._app_url, new=2)  # open new browser page ("tab")
+            # open new browser page (tab)
+            webbrowser.open(self._app_url, new=2)
 
     async def on_scenario_run(self, event: ScenarioRunEvent) -> None:
         scenario_result = event.scenario_result
-        self._rich_printer._console.out(f" → {scenario_result.scenario.subject}",
+        self._rich_printer._console.out(f" ➜ {scenario_result.scenario.subject}",
                                         style=Style(color="cyan"))
 
     async def on_step_run(self, event: StepRunEvent) -> None:
@@ -247,7 +252,14 @@ class VedroDevPlugin(Plugin):
         if step_result.exc_info:
             self._rich_printer.print_exception(step_result.exc_info)
 
-        status = StepStatus.FAILED if isinstance(event, StepFailedEvent) else StepStatus.PASSED
+        if isinstance(event, StepFailedEvent):
+            status = StepStatus.FAILED
+            self._step_buffer.clear()
+        else:
+            status = StepStatus.PASSED
+            if self._step_buffer:
+                self._step_scheduler.schedule(self._step_buffer.pop(0))
+
         self._steps[step_result.step_name]["status"] = status
         await self._sync_state()
 
@@ -266,7 +278,7 @@ class VedroDev(PluginConfig):
     host: str = "0.0.0.0"
 
     # Port for WebSocket server
-    port: int = 8080
+    port: int = 8484
 
     # App URL
     app_url: str = "http://localhost:3000"
@@ -275,4 +287,4 @@ class VedroDev(PluginConfig):
     app_open_on_startup: bool = False
 
     # Verbose mode
-    verbose = False
+    verbose: bool = False
