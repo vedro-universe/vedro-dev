@@ -1,7 +1,7 @@
 import webbrowser
 from asyncio import CancelledError
 from pathlib import Path
-from typing import Dict, List, Type, Union, cast
+from typing import Dict, List, Sequence, Type, Union, cast
 
 from rich.style import Style
 from vedro.core import (
@@ -31,6 +31,7 @@ from vedro.events import (
 from vedro.plugins.director.rich import RichPrinter
 
 from ._dev_runner import DevScenarioRunner
+from ._module_reloader import ModuleReloader
 from ._protocol import ProtoAction, ScenarioInfo, StepInfo, StepStatus
 from ._step_scheduler import DevStepScheduler
 from ._web_socket_server import MessageType, WebSocketServer
@@ -46,11 +47,14 @@ class VedroDevPlugin(Plugin):
         self._app_open_on_startup = config.app_open_on_startup
         self._app_url = config.app_url
         self._verbose = config.verbose
+        self._reload_imports = config.reload_imports
+        self._reload_imports_ignore = set(config.reload_imports_ignore)
 
         self._rich_printer = cast(RichPrinter, ...)
         self._global_config = cast(ConfigType, ...)
         self._loader = cast(ScenarioLoader, ...)
         self._discoverer = cast(ScenarioDiscoverer, ...)
+        self._module_reloader = cast(ModuleReloader, ...)
 
         self._ws_server = cast(WebSocketServer, ...)
 
@@ -106,6 +110,7 @@ class VedroDevPlugin(Plugin):
         self._rich_printer = RichPrinter()
         self._loader = self._global_config.Registry.ScenarioLoader()
         self._discoverer = self._global_config.Registry.ScenarioDiscoverer()
+        self._module_reloader = ModuleReloader()
 
         interrupt_exceptions = (KeyboardInterrupt, SystemExit, CancelledError,)
         self._global_config.Registry.ScenarioRunner.register(
@@ -193,6 +198,9 @@ class VedroDevPlugin(Plugin):
         })
 
     async def _reload_scenario(self, unique_id: str, rel_path: Path) -> VirtualScenario:
+        if self._reload_imports:
+            await self._module_reloader.reload(self._reload_imports_ignore)
+
         loaded = await self._loader.load(rel_path)
         scenarios = [VirtualScenario(scn, self._discoverer._discover_steps(scn)) for scn in loaded]  # type: ignore
 
@@ -281,10 +289,16 @@ class VedroDev(PluginConfig):
     port: int = 8484
 
     # App URL
-    app_url: str = "http://localhost:3000"
+    app_url: str = "https://dev.vedro.io"
 
     # Open app on startup
     app_open_on_startup: bool = False
 
     # Verbose mode
     verbose: bool = False
+
+    # Reload imports
+    reload_imports: bool = False
+
+    # Ignore specific imports
+    reload_imports_ignore: Sequence[str] = ()

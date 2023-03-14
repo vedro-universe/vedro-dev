@@ -27,3 +27,9 @@ class Config(vedro.Config):
             enabled = True
 
 ```
+
+# Usage
+
+```shell
+$ vedro run --dev -r silent
+```
