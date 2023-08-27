@@ -10,7 +10,7 @@ MessageType = Dict[str, Any]
 
 
 class WebSocketServer:
-    def __init__(self, host: str = "localhost", port: int = 8080, *,
+    def __init__(self, host: str = "localhost", port: int = 8084, *,
                  on_connect: Optional[Callable[[], Awaitable[None]]] = None,
                  on_disconnect: Optional[Callable[[], Awaitable[None]]] = None,
                  on_message: Optional[Callable[[MessageType], Awaitable[None]]] = None) -> None:
@@ -19,7 +19,7 @@ class WebSocketServer:
 
         self._app = Application()
         self._app.router.add_get("/ws", self._handler)
-        self._runner = AppRunner(self._app)
+        self._runner = AppRunner(self._app, handle_signals=False)
 
         self._app["websockets"] = WeakSet()
         self._on_connect = on_connect

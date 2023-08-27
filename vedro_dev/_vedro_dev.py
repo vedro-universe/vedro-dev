@@ -15,6 +15,7 @@ from vedro.core import (
     VirtualScenario,
     VirtualStep,
 )
+from vedro.core._scenario_discoverer import create_vscenario
 from vedro.events import (
     ArgParsedEvent,
     ArgParseEvent,
@@ -125,15 +126,18 @@ class VedroDevPlugin(Plugin):
         return self._step_scheduler
 
     def _print(self, message: str) -> None:
+        self._rich_printer.console.out(f"# {message}", style=Style(color="yellow"))
+
+    def _print_debug(self, message: str) -> None:
         if self._verbose:
-            self._rich_printer._console.out(f"# {message}", style=Style(color="grey50"))
+            self._rich_printer.console.out(f"# {message}", style=Style(color="grey50"))
 
     async def _on_connect(self) -> None:
-        self._print("Client connected")
+        self._print_debug("Client connected")
         await self._sync_state()
 
     async def _on_disconnect(self) -> None:
-        self._print("Client disconnected")
+        self._print_debug("Client disconnected")
 
     async def _run_step_x(self, step_name: str) -> None:
         step = await self._reload_step(self._scenario["unique_id"], self._scenario["rel_path"], step_name)
@@ -202,7 +206,7 @@ class VedroDevPlugin(Plugin):
             await self._module_reloader.reload(self._reload_imports_ignore)
 
         loaded = await self._loader.load(rel_path)
-        scenarios = [VirtualScenario(scn, self._discoverer._discover_steps(scn)) for scn in loaded]  # type: ignore
+        scenarios = [create_vscenario(scn) for scn in loaded]
 
         candidates = [scn for scn in scenarios if scn.unique_id == unique_id]
         if len(candidates) < 1:
@@ -238,7 +242,8 @@ class VedroDevPlugin(Plugin):
                                           on_message=self._on_message)
         await self._ws_server.start()
 
-        self._print(f"Server started on {self._host}:{self._port}")
+        self._print(f"Server is now running at {self._host}:{self._port}")
+        self._print(f"Open client at {self._app_url} to continue")
 
         if self._app_open_on_startup:
             # open new browser page (tab)
@@ -246,8 +251,8 @@ class VedroDevPlugin(Plugin):
 
     async def on_scenario_run(self, event: ScenarioRunEvent) -> None:
         scenario_result = event.scenario_result
-        self._rich_printer._console.out(f" ➜ {scenario_result.scenario.subject}",
-                                        style=Style(color="cyan"))
+        self._rich_printer.console.out(f" ➜ {scenario_result.scenario.subject}",
+                                       style=Style(color="cyan"))
 
     async def on_step_run(self, event: StepRunEvent) -> None:
         self._steps[event.step_result.step_name]["status"] = StepStatus.RUNNING
@@ -276,7 +281,7 @@ class VedroDevPlugin(Plugin):
 
     async def on_cleanup(self, event: CleanupEvent) -> None:
         await self._ws_server.stop()
-        self._print("Server stopped")
+        self._print_debug("Server stopped")
 
 
 class VedroDev(PluginConfig):
