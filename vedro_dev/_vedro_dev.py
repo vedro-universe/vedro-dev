@@ -197,7 +197,7 @@ class VedroDevPlugin(Plugin):
                 "unique_id": self._scenario["unique_id"],
                 "subject": self._scenario["subject"],
                 "rel_path": str(self._scenario["rel_path"]),
-                "steps": sorted(steps, key=lambda x: x["index"]),  # type: ignore
+                "steps": sorted(steps, key=lambda x: x["index"]),
             },
         })
 
